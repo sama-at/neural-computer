@@ -1,5 +1,7 @@
 # SUBLEQ Transformer
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/anadim/subleq-transformer/blob/main/subleq_transformer_demo.ipynb)
+
 Two independent approaches to making a standard transformer execute a Turing-complete computer — one with **hand-coded weights** (no training), one **learned from data** (no hand-coding).
 
 Both work. Both achieve 100% single-step accuracy and near-perfect multi-step generalization.
@@ -129,10 +131,10 @@ A standard transformer **trained from scratch** on single-step SUBLEQ state tran
 | Countdown | 20 | 39 | 100% | |
 | Multiply | 141 | ~33 | **100%** | Single steps in training; full programs never seen |
 | Fibonacci | 6 | 47 | **100%** | Never in training data |
-| Division | 8 | 71 | **87.5%** | Never in training data; div(126,7) fails |
-| Square root | 10 | 61 | **100%** | Never in training data |
-| Random programs | 100 | 30 | **97%** | |
-| **Total** | **786** | | **99.5%** | |
+| Division | 16 | 91 | **93.8%** | Never in training data; div(126,7) fails |
+| Square root | 20 | 61 | **95.0%** | Never in training data; isqrt(120) fails |
+| Random programs | 100 | 30 | **100%** | |
+| **Total** | **804** | | **99.8%** | |
 
 The longest correct computation: isqrt(100) = 10, requiring **61 consecutive correct steps** with zero errors.
 
@@ -207,8 +209,8 @@ subleq-transformer/
 **Round 2** shows that a transformer *learns* to implement a computer from data — trained only on single-step transitions, it discovers how to chain steps into arbitrary-length programs. The emergent multi-step generalization includes:
 - Fibonacci sequences (up to F(13) = 127, 47 steps) — never in training data
 - Full 12×12 multiplication table (141/141 correct)
-- Integer division (7/8 correct) and square root (10/10 correct) — never in training data
-- 782/786 multi-step test instances correct overall (99.5%)
+- Integer division (15/16 correct) and square root (19/20 correct) — never in training data
+- 802/804 multi-step test instances correct overall (99.8%)
 
 **Width > Depth**: The wide model (d=256, 6 layers, 4.9M params) achieves 100% while a deep model (d=128, 12 layers, 2.4M params) plateaus at 74.8%. Information routing bandwidth (d_head) is the bottleneck, not computational depth.
 

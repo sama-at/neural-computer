@@ -79,10 +79,10 @@ Programs marked with † were **never in training data in any form**. Multiply s
 | Countdown (1–20) | 20 | 39 | 100% | |
 | Multiply | 141 | ~33 | **100%** | Single steps in training; full programs never seen |
 | Fibonacci† | 6 | 47 | **100%** | |
-| Division† | 8 | 71 | **87.5%** | div(126,7) fails (gets stuck at 200-step limit) |
-| Square root† | 10 | 61 | **100%** | |
-| Random programs | 100 | 30 | **97%** | |
-| **Total** | **786** | | **99.5%** | |
+| Division† | 16 | 91 | **93.8%** | div(126,7) fails (gets stuck at 200-step limit) |
+| Square root† | 20 | 61 | **95.0%** | isqrt(120) fails (returns 11 instead of 10) |
+| Random programs | 100 | 30 | **100%** | |
+| **Total** | **804** | | **99.8%** | |
 
 Longest correct computation: **isqrt(100) = 10**, requiring 61 consecutive correct steps with zero errors.
 
