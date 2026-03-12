@@ -175,6 +175,33 @@ def make_isqrt(n):
     return mem, 0, 26
 
 
+def make_chain(num_instructions=None, values=None):
+    """Chain: each instruction subtracts one data cell from the next.
+
+    Instr i: mem[DATA_START+i+1] -= mem[DATA_START+i], goto next (or halt).
+    Every step changes exactly one data cell.
+    """
+    if num_instructions is None:
+        num_instructions = 4
+    num_instructions = min(num_instructions, 7)  # 8 data cells → 7 pairs
+    mem = [0] * MEM_SIZE
+    for i in range(num_instructions):
+        base = i * 3
+        a = DATA_START + i
+        b = DATA_START + i + 1
+        c = (i + 1) * 3 if i < num_instructions - 1 else -1
+        mem[base] = a
+        mem[base + 1] = b
+        mem[base + 2] = c
+    if values is not None:
+        for i, v in enumerate(values[:num_instructions + 1]):
+            mem[DATA_START + i] = clamp(v)
+    else:
+        for i in range(num_instructions + 1):
+            mem[DATA_START + i] = random.randint(-30, 30) or 1  # avoid 0
+    return mem, 0, DATA_START + num_instructions
+
+
 def make_halt():
     """Immediate halt."""
     mem = [0] * MEM_SIZE

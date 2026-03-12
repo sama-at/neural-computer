@@ -17,7 +17,7 @@ from .tokenizer import (
 )
 from .programs import (
     make_negate, make_addition, make_countdown, make_multiply,
-    make_fibonacci, make_div, make_isqrt, make_halt,
+    make_fibonacci, make_div, make_isqrt, make_chain, make_halt,
     generate_random_program, generate_random_state,
 )
 from .data import (
