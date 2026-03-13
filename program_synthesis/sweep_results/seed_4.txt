@@ -1,0 +1,88 @@
+/home/sam/subleq-transformer/.venv/lib/python3.12/site-packages/torch/_subclasses/functional_tensor.py:283: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+Loading executor from round2_trained/checkpoints/best_model.pt
+Model: 4,879,360 params (frozen)
+
+Program: fibonacci
+Ground truth code cells mem[0..14]:
+  instr @0: (31, 31, 3)
+  instr @3: (28, 31, 6)
+  instr @6: (31, 27, 9)
+  instr @9: (31, 31, 12)
+  instr @12: (27, 31, 15)
+
+10 I/O pair(s) covering pc=[0, 3, 6, 9, 12]:
+  pc 0->3: mem[31] 0->0
+  pc 3->6: mem[31] 0->-1
+  pc 6->9: mem[27] 0->1
+  pc 9->12: mem[31] -1->0
+  pc 12->15: mem[31] 0->-1
+  pc 0->3: mem[31] 0->0
+  pc 3->6: mem[31] 0->-2
+  pc 6->9: mem[27] 1->3
+  pc 9->12: mem[31] -2->0
+  pc 12->15: mem[31] 0->-3
+1000 held-out test I/O pairs
+
+Executor sanity check: 10/10 examples perfect
+
+Constrained: a,b in [0,31] (32 tokens), c also allows -1 (33 tokens)
+
+Optimizing 15 code cells over 2000 steps
+  mode=gumbel+constrained, tau: 5.0 -> 0.1
+
+  loss on 9 positions: ['PC', 'm24', 'm25', 'm26', 'm27', 'm28', 'm29', 'm30', 'm31']
+
+  Example I/O at supervised positions (first 5):
+             PC   m24   m25   m26   m27   m28   m29   m30   m31
+  in 0:     0     0     0     0     0     1     4     1     0
+  out0:     3     0     0     0     0     1     4     1     0
+          changed: ['PC']
+  in 1:     3     0     0     0     0     1     4     1     0
+  out1:     6     0     0     0     0     1     4     1    -1
+          changed: ['PC', 'm31']
+  in 2:     6     0     0     0     0     1     4     1    -1
+  out2:     9     0     0     0     1     1     4     1    -1
+          changed: ['PC', 'm27']
+  in 3:     9     0     0     0     1     1     4     1    -1
+  out3:    12     0     0     0     1     1     4     1     0
+          changed: ['PC', 'm31']
+  in 4:    12     0     0     0     1     1     4     1     0
+  out4:    15     0     0     0     1     1     4     1    -1
+          changed: ['PC', 'm31']
+
+step     1 | loss=1.5487 | tau=4.990 | 6/15 cells | neural=20% sym=20% | test: neural=20% sym=20%
+step   100 | loss=0.2537 | tau=4.112 | 4/15 cells | neural=0% sym=0% | test: neural=3% sym=3%
+step   200 | loss=0.2886 | tau=3.381 | 4/15 cells | neural=30% sym=30% | test: neural=27% sym=27%
+step   300 | loss=0.2774 | tau=2.781 | 4/15 cells | neural=30% sym=30% | test: neural=27% sym=27%
+step   400 | loss=0.5327 | tau=2.287 | 6/15 cells | neural=30% sym=30% | test: neural=27% sym=27%
+step   500 | loss=0.1700 | tau=1.880 | 10/15 cells | neural=70% sym=70% | test: neural=64% sym=64%
+step   600 | loss=0.3908 | tau=1.546 | 10/15 cells | neural=70% sym=70% | test: neural=67% sym=67%
+step   700 | loss=0.1413 | tau=1.272 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step   800 | loss=0.3577 | tau=1.046 | 11/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step   900 | loss=0.5129 | tau=0.860 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step  1000 | loss=0.2351 | tau=0.707 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step  1100 | loss=0.2581 | tau=0.581 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step  1200 | loss=0.2175 | tau=0.478 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step  1300 | loss=0.2847 | tau=0.393 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step  1400 | loss=0.2601 | tau=0.323 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step  1500 | loss=0.2169 | tau=0.266 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step  1600 | loss=0.2556 | tau=0.219 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step  1700 | loss=0.2557 | tau=0.180 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step  1800 | loss=0.2036 | tau=0.148 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step  1900 | loss=0.2136 | tau=0.122 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+step  2000 | loss=0.2136 | tau=0.100 | 10/15 cells | neural=80% sym=80% | test: neural=80% sym=80%
+
+============================================================
+     Instr |            Recovered |               Target | Match
+-----------+----------------------+----------------------+------
+        @0 |          (0, 21, -1) |          (31, 31, 3) | NO
+        @3 |          (28, 31, 6) |          (28, 31, 6) | yes
+        @6 |          (31, 27, 9) |          (31, 27, 9) | yes
+        @9 |         (31, 31, 12) |         (31, 31, 12) | yes
+       @12 |           (3, 0, 15) |         (27, 31, 15) | NO
+
+5/15 cells differ from ground truth
+
+Train  neural: 8/10 (80%)  symbolic: 8/10 (80%)
+Test   neural: 800/1000 (80%)  symbolic: 800/1000 (80%)

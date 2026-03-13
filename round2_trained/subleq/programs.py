@@ -242,6 +242,33 @@ def generate_random_program(num_instructions=None, value_range=30):
     return mem, pc
 
 
+def generate_random_safe_program(num_instructions=None, value_range=30):
+    """Generate a random program that only writes to data cells (b >= DATA_START)."""
+    if num_instructions is None:
+        num_instructions = random.randint(1, 8)
+    num_instructions = min(num_instructions, 8)
+
+    mem = [0] * MEM_SIZE
+
+    for i in range(num_instructions):
+        base = i * 3
+        a = random.randint(DATA_START, MEM_SIZE - 1)
+        b = random.randint(DATA_START, MEM_SIZE - 1)
+        if random.random() < 0.15:
+            c = -1
+        else:
+            c = random.randint(0, num_instructions - 1) * 3
+        mem[base] = a
+        mem[base + 1] = b
+        mem[base + 2] = c
+
+    for j in range(DATA_START, MEM_SIZE):
+        mem[j] = random.randint(-value_range, value_range)
+
+    pc = 0
+    return mem, pc
+
+
 def generate_random_state(num_instructions=None, value_range=30):
     """Generate a random valid state that won't immediately halt."""
     for _ in range(100):

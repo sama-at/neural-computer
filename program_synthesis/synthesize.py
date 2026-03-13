@@ -22,10 +22,26 @@ from subleq import (
     MiniSUBLEQTransformer,
     make_negate, make_addition, make_countdown, make_multiply,
     make_fibonacci, make_div, make_isqrt, make_chain,
-    generate_random_program,
+    generate_random_program, generate_random_safe_program,
     step, run, encode, decode, value_to_bytes, bytes_to_value,
 )
 from subleq.interpreter import MEM_SIZE, VOCAB_SIZE, SEQ_LEN, BYTES_PER_VALUE, CODE_SIZE
+
+HALT_TOKEN = (-1) & 0xFF  # 255
+ADDR_TOKENS = list(range(MEM_SIZE))  # 0..31
+BRANCH_TOKENS = ADDR_TOKENS + [HALT_TOKEN]  # 0..31 plus -1
+
+
+def make_valid_masks(n_code, device, offset=0):
+    """Per-cell masks: a/b operands allow 0..31, c operands also allow -1."""
+    ab_mask = torch.zeros(VOCAB_SIZE, dtype=torch.bool, device=device)
+    ab_mask[ADDR_TOKENS] = True
+    c_mask = torch.zeros(VOCAB_SIZE, dtype=torch.bool, device=device)
+    c_mask[BRANCH_TOKENS] = True
+    masks = []
+    for i in range(n_code):
+        masks.append(c_mask if (offset + i) % 3 == 2 else ab_mask)
+    return masks
 
 
 def load_executor(checkpoint_path, device):
@@ -51,14 +67,12 @@ def random_executor(device):
     return model
 
 
-def hybrid_forward(model, fixed_tokens, code_params, code_positions, tau, mode="gumbel"):
+def hybrid_forward(model, fixed_tokens, code_params, code_positions, tau, mode="gumbel",
+                   valid_masks=None):
     """Forward pass with learnable embeddings at code positions.
 
-    Modes:
-      gumbel:       soft Gumbel-softmax (continuous blend of embeddings)
-      gumbel_hard:  hard Gumbel-softmax (discrete forward, soft backward)
-      softmax:      plain softmax with temperature
-      latent:       optimize directly in embedding space
+    valid_masks: list of per-position boolean masks (one per code cell),
+                 or None for unconstrained.
     """
     B, S = fixed_tokens.shape
 
@@ -69,6 +83,8 @@ def hybrid_forward(model, fixed_tokens, code_params, code_positions, tau, mode="
             tok_emb[:, pos] = code_params[i].unsqueeze(0).expand(B, -1)
         else:
             logits_i = code_params[i].unsqueeze(0).expand(B, -1)
+            if valid_masks is not None:
+                logits_i = logits_i.masked_fill(~valid_masks[i].unsqueeze(0), float('-inf'))
             if mode in ("gumbel", "gumbel_hard"):
                 hard = mode == "gumbel_hard"
                 probs = F.gumbel_softmax(logits_i, tau=tau, hard=hard)
@@ -87,11 +103,24 @@ def hybrid_forward(model, fixed_tokens, code_params, code_positions, tau, mode="
     return model.output_head(h)
 
 
-def decode_latent(code_params, emb_weight):
+def _masked_argmax(code_params, valid_masks):
+    """Argmax over logits with optional per-position masking."""
+    if valid_masks is None:
+        return code_params.argmax(dim=-1).tolist()
+    result = []
+    for i in range(code_params.shape[0]):
+        logits_i = code_params[i].masked_fill(~valid_masks[i], float('-inf'))
+        result.append(logits_i.argmax().item())
+    return result
+
+
+def decode_latent(code_params, emb_weight, valid_masks=None):
     """Map latent vectors back to token ids via nearest embedding."""
-    # code_params: (N, d_model), emb_weight: (vocab, d_model)
     sims = F.cosine_similarity(
         code_params.unsqueeze(1), emb_weight.unsqueeze(0), dim=-1)
+    if valid_masks is not None:
+        for i in range(sims.shape[0]):
+            sims[i] = sims[i].masked_fill(~valid_masks[i], float('-inf'))
     return sims.argmax(dim=-1).tolist()
 
 
@@ -123,10 +152,13 @@ def make_program_state(program, rng):
     elif program == "chain":
         vals = [rng.choice([-1, 1]) * rng.randint(1, 30) for _ in range(8)]
         result = make_chain(values=vals)
-    elif program == "random":
+    elif program in ("random", "random_safe"):
         old_state = random.getstate()
         random.seed(rng.randint(0, 2**32 - 1))
-        mem, pc = generate_random_program(value_range=30)
+        if program == "random_safe":
+            mem, pc = generate_random_safe_program(value_range=30)
+        else:
+            mem, pc = generate_random_program(value_range=30)
         random.setstate(old_state)
         return mem, pc
     else:
@@ -149,27 +181,37 @@ def make_trace_pairs(mem, pc, max_steps=500):
     return pairs
 
 
-def check_equivalence(pred_code, true_code, io_pairs, n_code):
-    """Return 'exact', 'equivalent', 'wrong', or 'error'."""
-    if pred_code == true_code:
-        return "exact"
-    seen = set()
-    for _, _, mem_i, pc_i, _, _ in io_pairs:
-        if pc_i != 0:
-            continue
-        key = tuple(mem_i[n_code:])
-        if key in seen:
-            continue
-        seen.add(key)
-        gt_final, gt_pc, _ = run(mem_i, 0)
+def symbolic_acc(pred_code, pairs, code_offset, n_code_opt):
+    """Run decoded program on real SUBLEQ interpreter for each I/O pair."""
+    correct = 0
+    data_start = code_offset + n_code_opt
+    for _, _, mem_i, pc_i, new_mem_i, new_pc_i in pairs:
         test_mem = list(mem_i)
-        test_mem[:n_code] = pred_code
-        pred_final, pred_pc, pred_steps = run(test_mem, 0)
-        if pred_steps == 0:
-            return "error"
-        if pred_final[n_code:] != gt_final[n_code:] or pred_pc != gt_pc:
-            return "wrong"
-    return "equivalent"
+        test_mem[code_offset:code_offset + n_code_opt] = pred_code
+        try:
+            out_m, out_pc, halted = step(test_mem, pc_i)
+        except Exception:
+            continue
+        if out_pc == new_pc_i and out_m[data_start:] == new_mem_i[data_start:]:
+            correct += 1
+    return correct, len(pairs)
+
+
+def symbolic_acc_indices(pred_code, pairs, code_offset, n_code_opt, indices):
+    """Symbolic accuracy on a subset of pairs given by indices."""
+    correct = 0
+    data_start = code_offset + n_code_opt
+    for i in indices:
+        _, _, mem_i, pc_i, new_mem_i, new_pc_i = pairs[i]
+        test_mem = list(mem_i)
+        test_mem[code_offset:code_offset + n_code_opt] = pred_code
+        try:
+            out_m, out_pc, halted = step(test_mem, pc_i)
+        except Exception:
+            continue
+        if out_pc == new_pc_i and out_m[data_start:] == new_mem_i[data_start:]:
+            correct += 1
+    return correct, len(indices)
 
 
 def auto_device():
@@ -197,12 +239,18 @@ def main():
                              "latent: optimize directly in embedding space")
     parser.add_argument("--code-cells", type=str, default="3",
                         help="Number of code cells to optimize: integer or 'all' for full code region")
+    parser.add_argument("--code-offset", type=int, default=0,
+                        help="Starting code cell index to optimize (default 0)")
     parser.add_argument("--n-io", type=int, default=1, help="Number of I/O pairs (sampled from execution traces)")
     parser.add_argument("--n-test", type=int, default=0, help="Number of held-out test I/O pairs (0 to skip)")
     parser.add_argument("--program",
                         choices=["negate", "addition", "countdown", "multiply",
-                                 "fibonacci", "div", "isqrt", "chain", "random"],
+                                 "fibonacci", "div", "isqrt", "chain", "random", "random_safe"],
                         default="negate")
+    parser.add_argument("--constrained", action="store_true",
+                        help="Restrict code tokens to valid SUBLEQ addresses (0-31 and -1)")
+    parser.add_argument("--pc", type=int, nargs="+", default=None,
+                        help="Only train on I/O pairs at these PC values (e.g. --pc 12 or --pc 0 12)")
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
@@ -221,10 +269,16 @@ def main():
     print(f"Model: {model.count_params():,} params (frozen)")
 
     # --- Parse code cells ---
-    n_code = CODE_SIZE if args.code_cells == "all" else int(args.code_cells)
-    code_positions = list(range(1, 1 + n_code))  # token indices (pos 0 = PC)
+    n_code_total = CODE_SIZE if args.code_cells == "all" else int(args.code_cells)
+    code_offset = args.code_offset
+    n_code_opt = n_code_total  # number of cells to optimize
+    # code_positions: token indices of the cells we optimize (pos 0 = PC, pos 1 = mem[0], ...)
+    code_positions = list(range(1 + code_offset, 1 + code_offset + n_code_opt))
+    # n_code: total code region for trace filtering (must cover offset + count)
+    n_code = code_offset + n_code_opt
 
     # --- Create I/O pairs from execution traces ---
+    pc_filter = set(args.pc) if args.pc is not None else None
     rng = random.Random(args.seed)
     io_pairs = []
     first_mem = None
@@ -234,12 +288,11 @@ def main():
             for _ in range(100):
                 mem, pc = make_program_state(args.program, rng)
                 test_trace = make_trace_pairs(mem, pc)
-                if args.program != "random" or len(test_trace) >= 3:
+                if args.program not in ("random", "random_safe") or len(test_trace) >= 3:
                     break
             first_mem = mem
             start_pc = pc
-        elif args.program == "random":
-            # Keep code, re-randomize data cells
+        elif args.program in ("random", "random_safe"):
             mem = list(first_mem)
             for j in range(CODE_SIZE, MEM_SIZE):
                 mem[j] = rng.randint(-30, 30)
@@ -249,15 +302,21 @@ def main():
         trace = make_trace_pairs(mem, pc)
         # Only keep steps where the executed instruction is in the optimized region
         trace = [p for p in trace if p[3] < n_code]
+        if args.pc is not None:
+            trace = [p for p in trace if p[3] in pc_filter]
         io_pairs.extend(trace)
     io_pairs = io_pairs[:args.n_io]
-    true_code = first_mem[:n_code]
+    true_code = first_mem[code_offset:code_offset + n_code_opt]
 
-    print(f"\nProgram: {args.program}")
-    print(f"Ground truth code cells mem[0..{n_code-1}]:")
-    for i in range(0, n_code, 3):
+    print(f"\nProgram: {args.program}", end="")
+    if args.pc is not None:
+        print(f"  (filtered to pc={sorted(pc_filter)})", end="")
+    print()
+    print(f"Ground truth code cells mem[{code_offset}..{code_offset + n_code_opt - 1}]:")
+    for i in range(0, n_code_opt, 3):
         chunk = true_code[i:i+3]
-        print(f"  instr @{i}: ({', '.join(str(v) for v in chunk)})")
+        abs_i = code_offset + i
+        print(f"  instr @{abs_i}: ({', '.join(str(v) for v in chunk)})")
 
     # Show which PCs are covered
     pcs_covered = sorted(set(p[3] for p in io_pairs))
@@ -268,16 +327,30 @@ def main():
     if len(io_pairs) > 10:
         print(f"  ... and {len(io_pairs) - 10} more")
 
+    # Per-instruction signal analysis
+    data_cell_indices = set(range(CODE_SIZE, MEM_SIZE))
+    for pc_val in sorted(set(p[3] for p in io_pairs)):
+        pc_pairs = [p for p in io_pairs if p[3] == pc_val]
+        n_changes = sum(
+            1 for _, _, mem_i, _, new_mem_i, new_pc_i in pc_pairs
+            if any(mem_i[j] != new_mem_i[j] for j in data_cell_indices)
+        )
+        print(f"  @{pc_val}: {len(pc_pairs)} examples, {n_changes} change data ({n_changes*100//max(len(pc_pairs),1)}%)")
+
+    # Group I/O pair indices by PC for per-instruction reporting
+    pc_values = sorted(set(p[3] for p in io_pairs))
+    train_pc_indices = {pc: [i for i, p in enumerate(io_pairs) if p[3] == pc] for pc in pc_values}
+
     inp_batch = torch.stack([p[0] for p in io_pairs]).to(device)
     tgt_batch = torch.stack([p[1] for p in io_pairs]).to(device)
 
     # --- Generate held-out test I/O pairs ---
+    test_pairs = []
     test_inp_batch = test_tgt_batch = None
     if args.n_test > 0:
         test_rng = random.Random(args.seed + 9999)
-        test_pairs = []
         while len(test_pairs) < args.n_test:
-            if args.program == "random":
+            if args.program in ("random", "random_safe"):
                 mem = list(first_mem)
                 for j in range(CODE_SIZE, MEM_SIZE):
                     mem[j] = test_rng.randint(-30, 30)
@@ -285,10 +358,14 @@ def main():
             else:
                 mem, pc = make_program_state(args.program, test_rng)
             trace = make_trace_pairs(mem, pc)
-            test_pairs.extend([p for p in trace if p[3] < n_code])
+            filtered = [p for p in trace if p[3] < n_code]
+            if pc_filter is not None:
+                filtered = [p for p in filtered if p[3] in pc_filter]
+            test_pairs.extend(filtered)
         test_pairs = test_pairs[:args.n_test]
         test_inp_batch = torch.stack([p[0] for p in test_pairs]).to(device)
         test_tgt_batch = torch.stack([p[1] for p in test_pairs]).to(device)
+        test_pc_indices = {pc: [i for i, p in enumerate(test_pairs) if p[3] == pc] for pc in pc_values}
         print(f"{args.n_test} held-out test I/O pairs")
 
     # --- Verify executor works on the correct inputs ---
@@ -303,15 +380,22 @@ def main():
         else:
             print(" WARNING — model may be undertrained")
 
+    # --- Constraint masks ---
+    valid_masks = make_valid_masks(n_code_opt, device, code_offset) if args.constrained else None
+    if args.constrained:
+        print(f"\nConstrained: a,b in [0,{MEM_SIZE-1}] ({MEM_SIZE} tokens), c also allows -1 ({MEM_SIZE+1} tokens)")
+
     # --- Set up learnable parameters ---
     if args.mode == "latent":
-        code_params = nn.Parameter(torch.randn(n_code, model.d_model, device=device) * 0.02)
+        code_params = nn.Parameter(torch.randn(n_code_opt, model.d_model, device=device) * 0.02)
     else:
-        code_params = nn.Parameter(torch.zeros(n_code, VOCAB_SIZE, device=device))
+        code_params = nn.Parameter(torch.zeros(n_code_opt, VOCAB_SIZE, device=device))
     optimizer = torch.optim.Adam([code_params], lr=args.lr)
 
-    print(f"\nOptimizing {n_code} code cells over {args.steps} steps")
-    print(f"  mode={args.mode}", end="")
+    constrained_tag = "+constrained" if args.constrained else ""
+    offset_tag = f" (cells {code_offset}..{code_offset + n_code_opt - 1})" if code_offset > 0 else ""
+    print(f"\nOptimizing {n_code_opt} code cells{offset_tag} over {args.steps} steps")
+    print(f"  mode={args.mode}{constrained_tag}", end="")
     if args.mode != "latent":
         print(f", tau: {args.tau_start} -> {args.tau_end}")
     else:
@@ -344,7 +428,8 @@ def main():
         tau = args.tau_start * (args.tau_end / args.tau_start) ** frac
 
         out_logits = hybrid_forward(
-            model, inp_batch, code_params, code_positions, tau, mode=args.mode)
+            model, inp_batch, code_params, code_positions, tau, mode=args.mode,
+            valid_masks=valid_masks)
         loss = F.cross_entropy(
             out_logits[:, data_positions].reshape(-1, VOCAB_SIZE),
             tgt_batch[:, data_positions].reshape(-1))
@@ -356,32 +441,17 @@ def main():
         if step_i % 100 == 0 or step_i == 1:
             with torch.no_grad():
                 if args.mode == "latent":
-                    guesses = decode_latent(code_params, emb_weight)
+                    guesses = decode_latent(code_params, emb_weight, valid_masks)
                 else:
-                    guesses = code_params.argmax(dim=-1).tolist()
+                    guesses = _masked_argmax(code_params, valid_masks)
                 decoded = [bytes_to_value([g]) for g in guesses]
-                n_match = sum(a == b for a, b in zip(decoded, true_code))
-                status = check_equivalence(decoded, true_code, io_pairs, n_code)
-
-                if args.mode == "latent":
-                    sims = F.cosine_similarity(
-                        code_params.unsqueeze(1), emb_weight.unsqueeze(0), dim=-1)
-                    avg_sim = sims.max(dim=-1).values.mean().item()
-                    conf_str = f"sim={avg_sim:.2f}"
-                else:
-                    probs = F.softmax(code_params, dim=-1)
-                    avg_conf = probs.max(dim=-1).values.mean().item()
-                    conf_str = f"conf={avg_conf:.2f}"
+                n_match = sum(a == b for a, b in zip(decoded, true_code))  # true_code is the optimized slice
 
                 tau_str = f" | tau={tau:.3f}" if args.mode != "latent" else ""
-                status_str = {"exact": "EXACT", "equivalent": "EQUIV",
-                              "wrong": "WRONG", "error": "ERROR"}[status]
-                # Discrete eval: get token ids, build exact embeddings
-                if args.mode == "latent":
-                    tok_ids = decode_latent(code_params, emb_weight)
-                else:
-                    tok_ids = guesses  # already argmax'd above
-                def discrete_acc(inp, tgt):
+
+                # Neural executor accuracy (discrete tokens through model)
+                tok_ids = guesses if args.mode != "latent" else decode_latent(code_params, emb_weight, valid_masks)
+                def neural_acc(inp, tgt):
                     te = model.token_emb(inp).clone()
                     for ii, pos in enumerate(code_positions):
                         te[:, pos] = emb_weight[tok_ids[ii]]
@@ -394,52 +464,73 @@ def main():
                     tgts = tgt[:, data_positions]
                     return (preds == tgts).all(dim=1).float().mean().item()
 
-                train_acc = discrete_acc(inp_batch, tgt_batch)
-                train_str = f" | train={train_acc:.0%}"
-                test_str = ""
+                n_tr = neural_acc(inp_batch, tgt_batch)
+                s_tr_c, s_tr_t = symbolic_acc(decoded, io_pairs, code_offset, n_code_opt)
+                s_tr = s_tr_c / s_tr_t
+                acc_str = f"neural={n_tr:.0%} sym={s_tr:.0%}"
                 if test_inp_batch is not None:
-                    test_acc = discrete_acc(test_inp_batch, test_tgt_batch)
-                    test_str = f" | test={test_acc:.0%}"
+                    n_te = neural_acc(test_inp_batch, test_tgt_batch)
+                    s_te_c, s_te_t = symbolic_acc(decoded, test_pairs, code_offset, n_code_opt)
+                    s_te = s_te_c / s_te_t
+                    acc_str += f" | test: neural={n_te:.0%} sym={s_te:.0%}"
                 print(f"step {step_i:5d} | loss={loss.item():.4f}{tau_str} | "
-                      f"{n_match}/{n_code} cells | {conf_str} {status_str}{train_str}{test_str}")
+                      f"{n_match}/{n_code_opt} cells | {acc_str}")
+                # Per-instruction breakdown
+                parts = []
+                for pc_val in pc_values:
+                    tr_c, tr_t = symbolic_acc_indices(decoded, io_pairs, code_offset, n_code_opt, train_pc_indices[pc_val])
+                    part = f"@{pc_val}:{tr_c}/{tr_t}"
+                    if test_inp_batch is not None and pc_val in test_pc_indices and test_pc_indices[pc_val]:
+                        te_c, te_t = symbolic_acc_indices(decoded, test_pairs, code_offset, n_code_opt, test_pc_indices[pc_val])
+                        part += f"({te_c}/{te_t})"
+                    parts.append(part)
+                print(f"  {'':>9} per-instr sym: {' '.join(parts)}")
 
     # --- Final result ---
     with torch.no_grad():
         if args.mode == "latent":
-            final_tokens = decode_latent(code_params, emb_weight)
+            final_tokens = decode_latent(code_params, emb_weight, valid_masks)
         else:
-            final_tokens = code_params.argmax(dim=-1).tolist()
+            final_tokens = _masked_argmax(code_params, valid_masks)
     pred_code = [bytes_to_value([t]) for t in final_tokens]
 
-    print(f"\n{'='*60}")
-    print(f"{'Instr':>10} | {'Recovered':>20} | {'Target':>20} | Match")
-    print(f"{'-'*10}-+-{'-'*20}-+-{'-'*20}-+------")
-    all_match = True
-    for i in range(0, n_code, 3):
+    has_test = test_inp_batch is not None
+    hdr = f"{'Instr':>10} | {'Recovered':>20} | {'Target':>20} | Match | {'Train sym':>10}"
+    if has_test:
+        hdr += f" | {'Test sym':>10}"
+    print(f"\n{'='*len(hdr)}")
+    print(hdr)
+    print(f"{'-'*len(hdr)}")
+    for i in range(0, n_code_opt, 3):
         pred_chunk = pred_code[i:i+3]
         true_chunk = true_code[i:i+3]
         match = pred_chunk == true_chunk
-        if not match:
-            all_match = False
-        print(f"{'@'+str(i):>10} | {str(tuple(pred_chunk)):>20} | {str(tuple(true_chunk)):>20} | {'yes' if match else 'NO'}")
+        abs_i = code_offset + i
+        if abs_i in train_pc_indices and train_pc_indices[abs_i]:
+            tr_c, tr_t = symbolic_acc_indices(pred_code, io_pairs, code_offset, n_code_opt, train_pc_indices[abs_i])
+            tr_str = f"{tr_c}/{tr_t}"
+        else:
+            tr_str = "n/a"
+        row = (f"{'@'+str(abs_i):>10} | {str(tuple(pred_chunk)):>20} | {str(tuple(true_chunk)):>20}"
+               f" | {'yes' if match else 'NO':>5} | {tr_str:>10}")
+        if has_test:
+            if abs_i in test_pc_indices and test_pc_indices[abs_i]:
+                te_c, te_t = symbolic_acc_indices(pred_code, test_pairs, code_offset, n_code_opt, test_pc_indices[abs_i])
+                te_str = f"{te_c}/{te_t}"
+            else:
+                te_str = "n/a"
+            row += f" | {te_str:>10}"
+        print(row)
 
-    final_status = check_equivalence(pred_code, true_code, io_pairs, n_code)
     n_diff = sum(a != b for a, b in zip(pred_code, true_code))
-    if final_status == "exact":
-        print("\nEXACT MATCH")
-    elif final_status == "equivalent":
-        print(f"\nEQUIVALENT — {n_diff} code cell(s) differ but full execution matches on all inputs")
-    elif final_status == "error":
-        print(f"\nERROR — recovered program crashes (invalid addresses)")
+    if n_diff == 0:
+        print(f"\nEXACT MATCH — all {n_code_opt} cells recovered")
     else:
-        print(f"\nWRONG — {n_diff}/{n_code} cells wrong")
+        print(f"\n{n_diff}/{n_code_opt} cells differ from ground truth")
 
     with torch.no_grad():
-        if args.mode == "latent":
-            tok_ids = decode_latent(code_params, emb_weight)
-        else:
-            tok_ids = code_params.argmax(dim=-1).tolist()
-        def final_acc(inp, tgt):
+        tok_ids = final_tokens
+        def final_neural_acc(inp, tgt):
             te = model.token_emb(inp).clone()
             for ii, pos in enumerate(code_positions):
                 te[:, pos] = emb_weight[tok_ids[ii]]
@@ -451,13 +542,15 @@ def main():
             preds = logits[:, data_positions].argmax(dim=-1)
             tgts = tgt[:, data_positions]
             correct = (preds == tgts).all(dim=1).sum().item()
-            total = inp.shape[0]
-            return correct, total
-        train_c, train_t = final_acc(inp_batch, tgt_batch)
-        print(f"\nTrain accuracy: {train_c}/{train_t} ({train_c/train_t:.0%})")
-        if test_inp_batch is not None:
-            test_c, test_t = final_acc(test_inp_batch, test_tgt_batch)
-            print(f"Test accuracy:  {test_c}/{test_t} ({test_c/test_t:.0%})")
+            return correct, inp.shape[0]
+
+        n_tr_c, n_tr_t = final_neural_acc(inp_batch, tgt_batch)
+        s_tr_c, s_tr_t = symbolic_acc(pred_code, io_pairs, code_offset, n_code_opt)
+        print(f"\nTrain  neural: {n_tr_c}/{n_tr_t} ({n_tr_c/n_tr_t:.0%})  symbolic: {s_tr_c}/{s_tr_t} ({s_tr_c/s_tr_t:.0%})")
+        if has_test:
+            n_te_c, n_te_t = final_neural_acc(test_inp_batch, test_tgt_batch)
+            s_te_c, s_te_t = symbolic_acc(pred_code, test_pairs, code_offset, n_code_opt)
+            print(f"Test   neural: {n_te_c}/{n_te_t} ({n_te_c/n_te_t:.0%})  symbolic: {s_te_c}/{s_te_t} ({s_te_c/s_te_t:.0%})")
 
 
 if __name__ == "__main__":
