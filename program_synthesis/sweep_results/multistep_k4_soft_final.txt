@@ -1,0 +1,73 @@
+/home/sam/subleq-transformer/.venv/lib/python3.12/site-packages/torch/_subclasses/functional_tensor.py:283: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+Loading executor from round2_trained/checkpoints/best_model.pt
+Model: 4,879,360 params (frozen)
+
+Multi-step synthesis: k=4 chained execution steps
+Program: fibonacci
+Ground truth code cells mem[0..23]:
+  instr @0: (31, 31, 3)
+  instr @3: (28, 31, 6)
+  instr @6: (31, 27, 9)
+  instr @9: (31, 31, 12)
+  instr @12: (27, 31, 15)
+  instr @15: (31, 28, 18)
+  instr @18: (30, 29, -1)
+  instr @21: (31, 31, 0)
+
+200 training windows (k=4 steps, window_mode=any):
+  [0] pc: 12->15->18->21->0
+       data in:  [0, 0, 0, 1, 1, 3, 1, 0]
+       data out: [0, 0, 0, 1, 2, 2, 1, 0]
+  [1] pc: 3->6->9->12->15
+       data in:  [0, 0, 0, 3, 5, 1, 1, 0]
+       data out: [0, 0, 0, 8, 5, 1, 1, -8]
+  [2] pc: 9->12->15->18->-1
+       data in:  [0, 0, 0, 8, 5, 1, 1, -5]
+       data out: [0, 0, 0, 8, 13, 0, 1, -8]
+  [3] pc: 9->12->15->18->21
+       data in:  [0, 0, 0, 3, 2, 2, 1, -2]
+       data out: [0, 0, 0, 3, 5, 1, 1, -3]
+  [4] pc: 15->18->21->0->3
+       data in:  [0, 0, 0, 1, 1, 3, 1, -1]
+       data out: [0, 0, 0, 1, 2, 2, 1, 0]
+  start pc coverage: @0:28 @3:27 @6:28 @9:29 @12:22 @15:22 @18:22 @21:22
+200 held-out test I/O pairs
+
+Chain sanity (GT code, k=4): 200/200 correct
+Constrained: a,b in [0,31], c also allows -1
+
+Optimizing 24 code cells over 1000 steps
+  mode=gumbel+constrained, chain=4 steps
+  state_mode=soft, loss_scope=final
+  tau: 5.0 -> 0.1
+  loss on 9 positions: ['PC', 'm24', 'm25', 'm26', 'm27', 'm28', 'm29', 'm30', 'm31']
+
+step     1 | loss=4.4852 | tau=4.980 | 2/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   100 | loss=2.8306 | tau=3.381 | 0/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   200 | loss=2.7934 | tau=2.287 | 2/24 cells | neural=0/200(0%) sym=4/200(2%) | test: neural=0/200(0%) sym=7/200(3%)
+step   300 | loss=2.6754 | tau=1.546 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   400 | loss=2.5836 | tau=1.046 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   500 | loss=2.5241 | tau=0.707 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   600 | loss=2.4643 | tau=0.478 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   700 | loss=2.3614 | tau=0.323 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   800 | loss=2.3903 | tau=0.219 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   900 | loss=2.3278 | tau=0.148 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step  1000 | loss=2.3353 | tau=0.100 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+
+================================================================
+     Instr |            Recovered |               Target | Match
+----------------------------------------------------------------
+        @0 |           (0, 29, 6) |          (31, 31, 3) |    NO
+        @3 |           (19, 1, 6) |          (28, 31, 6) |    NO
+        @6 |          (16, 0, 10) |          (31, 27, 9) |    NO
+        @9 |           (22, 0, 6) |         (31, 31, 12) |    NO
+       @12 |           (4, 0, 21) |         (27, 31, 15) |    NO
+       @15 |           (22, 0, 1) |         (31, 28, 18) |    NO
+       @18 |          (23, 21, 3) |         (30, 29, -1) |    NO
+       @21 |          (31, 15, 0) |          (31, 31, 0) |    NO
+
+21/24 cells differ from ground truth
+
+Train (k=4)  neural: 0/200 (0%)  symbolic: 0/200 (0%)
+Test  (k=4)  neural: 0/200 (0%)  symbolic: 0/200 (0%)

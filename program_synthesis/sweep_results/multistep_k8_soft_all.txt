@@ -1,0 +1,73 @@
+/home/sam/subleq-transformer/.venv/lib/python3.12/site-packages/torch/_subclasses/functional_tensor.py:283: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+Loading executor from round2_trained/checkpoints/best_model.pt
+Model: 4,879,360 params (frozen)
+
+Multi-step synthesis: k=8 chained execution steps
+Program: fibonacci
+Ground truth code cells mem[0..23]:
+  instr @0: (31, 31, 3)
+  instr @3: (28, 31, 6)
+  instr @6: (31, 27, 9)
+  instr @9: (31, 31, 12)
+  instr @12: (27, 31, 15)
+  instr @15: (31, 28, 18)
+  instr @18: (30, 29, -1)
+  instr @21: (31, 31, 0)
+
+200 training windows (k=8 steps, window_mode=any):
+  [0] pc: 6->9->12->15->18->21->0->3->6
+       data in:  [0, 0, 0, 1, 2, 2, 1, -2]
+       data out: [0, 0, 0, 3, 5, 1, 1, -5]
+  [1] pc: 15->18->21->0->3->6->9->12->15
+       data in:  [0, 0, 0, 1, 1, 3, 1, -1]
+       data out: [0, 0, 0, 3, 2, 2, 1, -3]
+  [2] pc: 21->0->3->6->9->12->15->18->-1
+       data in:  [0, 0, 0, 3, 5, 1, 1, -3]
+       data out: [0, 0, 0, 8, 13, 0, 1, -8]
+  [3] pc: 18->21->0->3->6->9->12->15->18
+       data in:  [0, 0, 0, 3, 5, 2, 1, -3]
+       data out: [0, 0, 0, 8, 13, 1, 1, -8]
+  [4] pc: 3->6->9->12->15->18->21->0->3
+       data in:  [0, 0, 0, 1, 2, 2, 1, 0]
+       data out: [0, 0, 0, 3, 5, 1, 1, 0]
+  start pc coverage: @0:24 @3:26 @6:25 @9:26 @12:26 @15:23 @18:25 @21:25
+200 held-out test I/O pairs
+
+Chain sanity (GT code, k=8): 200/200 correct
+Constrained: a,b in [0,31], c also allows -1
+
+Optimizing 24 code cells over 1000 steps
+  mode=gumbel+constrained, chain=8 steps
+  state_mode=soft, loss_scope=all
+  tau: 5.0 -> 0.1
+  loss on 9 positions: ['PC', 'm24', 'm25', 'm26', 'm27', 'm28', 'm29', 'm30', 'm31']
+
+step     1 | loss=4.1171 | tau=4.980 | 1/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   100 | loss=2.6507 | tau=3.381 | 2/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   200 | loss=2.6698 | tau=2.287 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   300 | loss=3.0312 | tau=1.546 | 2/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   400 | loss=3.0696 | tau=1.046 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   500 | loss=3.1164 | tau=0.707 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   600 | loss=3.2263 | tau=0.478 | 2/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   700 | loss=3.1771 | tau=0.323 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   800 | loss=2.9923 | tau=0.219 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step   900 | loss=2.9794 | tau=0.148 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+step  1000 | loss=2.9306 | tau=0.100 | 3/24 cells | neural=0/200(0%) sym=0/200(0%) | test: neural=0/200(0%) sym=0/200(0%)
+
+================================================================
+     Instr |            Recovered |               Target | Match
+----------------------------------------------------------------
+        @0 |            (0, 3, 6) |          (31, 31, 3) |    NO
+        @3 |           (19, 0, 5) |          (28, 31, 6) |    NO
+        @6 |           (14, 0, 9) |          (31, 27, 9) |    NO
+        @9 |           (1, 3, 12) |         (31, 31, 12) |    NO
+       @12 |           (4, 1, 13) |         (27, 31, 15) |    NO
+       @15 |            (1, 1, 1) |         (31, 28, 18) |    NO
+       @18 |          (4, 31, 11) |         (30, 29, -1) |    NO
+       @21 |           (16, 3, 0) |          (31, 31, 0) |    NO
+
+21/24 cells differ from ground truth
+
+Train (k=8)  neural: 0/200 (0%)  symbolic: 0/200 (0%)
+Test  (k=8)  neural: 0/200 (0%)  symbolic: 0/200 (0%)

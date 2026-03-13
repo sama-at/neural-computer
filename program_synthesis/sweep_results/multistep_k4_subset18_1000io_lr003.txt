@@ -1,0 +1,40 @@
+/home/sam/subleq-transformer/.venv/lib/python3.12/site-packages/torch/_subclasses/functional_tensor.py:283: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+Loading executor from round2_trained/checkpoints/best_model.pt
+Model: 4,879,360 params (frozen)
+
+Multi-step synthesis: k=4 chained execution steps
+Program: fibonacci
+Ground truth code cells mem[18..20]:
+  instr @18: (30, 29, -1)
+
+1000 training windows (k=4 steps, window_mode=any):
+  [0] pc: 12->15->18->21->0
+       data in:  [0, 0, 0, 1, 1, 3, 1, 0]
+       data out: [0, 0, 0, 1, 2, 2, 1, 0]
+  [1] pc: 3->6->9->12->15
+       data in:  [0, 0, 0, 3, 5, 1, 1, 0]
+       data out: [0, 0, 0, 8, 5, 1, 1, -8]
+  [2] pc: 9->12->15->18->-1
+       data in:  [0, 0, 0, 8, 5, 1, 1, -5]
+       data out: [0, 0, 0, 8, 13, 0, 1, -8]
+  [3] pc: 9->12->15->18->21
+       data in:  [0, 0, 0, 3, 2, 2, 1, -2]
+       data out: [0, 0, 0, 3, 5, 1, 1, -3]
+  [4] pc: 15->18->21->0->3
+       data in:  [0, 0, 0, 1, 1, 3, 1, -1]
+       data out: [0, 0, 0, 1, 2, 2, 1, 0]
+  start pc coverage: @0:137 @3:137 @6:137 @9:138 @12:113 @15:113 @18:112 @21:113
+1000 held-out test I/O pairs
+
+Chain sanity (GT code, k=4): 1000/1000 correct
+Constrained: a,b in [0,31], c also allows -1
+
+Optimizing 3 code cells over 1000 steps
+  mode=gumbel+constrained, chain=4 steps
+  state_mode=soft, loss_scope=all
+  tau: 5.0 -> 0.1
+  loss on 9 positions: ['PC', 'm24', 'm25', 'm26', 'm27', 'm28', 'm29', 'm30', 'm31']
+
+step     1 | loss=0.8169 | tau=4.980 | 0/3 cells | neural=524/1000(52%) sym=524/1000(52%) | test: neural=526/1000(52%) sym=526/1000(52%)
+step   100 | loss=0.7049 | tau=3.381 | 0/3 cells | neural=524/1000(52%) sym=524/1000(52%) | test: neural=526/1000(52%) sym=526/1000(52%)
